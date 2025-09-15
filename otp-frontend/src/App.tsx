@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import "./App.css";
 
 const API_BASE = "http://localhost:8080";
-const OTP_LENGTH = 6;
+const OTP_LENGTH = 4; // Changed to 4 digits
 const OTP_TTL = 60; // seconds until OTP considered expired
 
 interface OtpResponse {
@@ -19,7 +19,7 @@ const MessageType = {
   SUCCESS: "success",
   ERROR: "error",
   INFO: "info",
-  WARNING: "warning"
+  WARNING: "warning",
 } as const;
 type MessageType = typeof MessageType[keyof typeof MessageType];
 
@@ -41,69 +41,74 @@ function OtpInput({
   disabled?: boolean;
   onComplete?: (otp: string) => void;
 }) {
-  const vals = value.padEnd(length).split("").slice(0, length);
+  const vals = value.split("");
   const refs = useRef<Array<HTMLInputElement | null>>([]);
+  const isValidatingRef = useRef(false); // Track validation state
 
   useEffect(() => {
     refs.current = refs.current.slice(0, length);
   }, [length]);
 
+  // Auto-focus first input on mount
   useEffect(() => {
-    if (value.length === length && onComplete) {
+    focusAt(0);
+  }, []);
+
+  // Trigger onComplete with debouncing to prevent multiple calls
+  useEffect(() => {
+    if (value.length !== length || !onComplete || isValidatingRef.current) return;
+
+    const timer = setTimeout(() => {
+      isValidatingRef.current = true;
       onComplete(value);
-    }
+    }, 100); // Slight delay to prevent rapid triggers
+
+    return () => clearTimeout(timer);
   }, [value, length, onComplete]);
 
   const focusAt = useCallback((i: number) => {
     const el = refs.current[i];
-    if (el) {
+    if (el && !disabled && !isValidatingRef.current) {
       el.focus();
       el.select();
     }
-  }, []);
+  }, [disabled]);
 
-const handleChange = (i: number, v: string) => {
-  if (disabled) return;
+  const handleChange = (i: number, v: string) => {
+    if (disabled || isValidatingRef.current) return;
 
-  const digit = v.replace(/[^0-9]/g, "").slice(-1);
+    const digit = v.replace(/[^0-9]/g, "").slice(-1);
+    const chars = value.split("");
+    chars[i] = digit;
+    const joined = chars.join("").slice(0, length);
 
-  // Work off the current value directly
-  const chars = value.split("");
-  chars[i] = digit;
-  const joined = chars.join("");
+    onChange(joined);
 
-  onChange(joined);
-
-  // Immediately advance to next field
-  if (digit && i < length - 1) {
-    focusAt(i + 1);
-  }
-};
-
+    // Only advance focus if not the last digit
+    if (digit && i < length - 1) {
+      focusAt(i + 1);
+    }
+  };
 
   const handleKeyDown = (i: number, e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (disabled) return;
-    
+    if (disabled || isValidatingRef.current) return;
+
     const key = e.key;
-    
-    // Allow numeric keys to pass through normally
+
     if (/^[0-9]$/.test(key)) {
-      // Let the normal onChange handle it
       return;
     }
-    
+
     if (key === "Backspace") {
       e.preventDefault();
       const arr = [...vals];
-      
+
       if (vals[i]) {
-        // Clear current field
         arr[i] = "";
-        onChange(arr.join("").replace(/\s/g, ""));
+        onChange(arr.join(""));
       } else if (i > 0) {
-        // Move to previous field and clear it
         arr[i - 1] = "";
-        onChange(arr.join("").replace(/\s/g, ""));
+        onChange(arr.join(""));
         setTimeout(() => focusAt(i - 1), 10);
       }
     } else if (key === "ArrowLeft" && i > 0) {
@@ -112,29 +117,24 @@ const handleChange = (i: number, v: string) => {
     } else if (key === "ArrowRight" && i < length - 1) {
       e.preventDefault();
       focusAt(i + 1);
-    } else if (key === "Delete") {
-      e.preventDefault();
-      const arr = [...vals];
-      arr[i] = "";
-      onChange(arr.join("").replace(/\s/g, ""));
     }
   };
 
   const handlePaste = (e: React.ClipboardEvent) => {
-    if (disabled) return;
-    
+    if (disabled || isValidatingRef.current) return;
+
     e.preventDefault();
     const text = e.clipboardData.getData("text").replace(/[^0-9]/g, "");
     if (!text) return;
-    
-    const arr = [...vals];
+
+    const arr = Array(length).fill("");
     for (let i = 0; i < Math.min(length, text.length); i++) {
       arr[i] = text[i];
     }
     const joined = arr.join("").slice(0, length);
     onChange(joined);
-    
-    // Focus appropriate field
+
+    // Focus last input if full, or next empty
     const nextEmpty = joined.split("").findIndex((c) => !c);
     if (nextEmpty === -1) {
       focusAt(length - 1);
@@ -149,26 +149,23 @@ const handleChange = (i: number, v: string) => {
         <input
           key={i}
           ref={(el) => { refs.current[i] = el; }}
-          id={`otp-input-${i}`}
           inputMode="numeric"
           pattern="[0-9]*"
           type="text"
-
-
           maxLength={1}
           aria-label={`Digit ${i + 1} of ${length}`}
-          className={`w-28 h-32 md:w-36 md:h-40 text-6xl md:text-7xl text-center rounded-3xl border-4 bg-white shadow-2xl transition-all duration-300 font-mono font-black otp-input ${
-            disabled 
-              ? "opacity-50 cursor-not-allowed border-gray-200" 
-              : vals[i] 
-                ? "border-emerald-500 bg-emerald-50 text-emerald-700 shadow-emerald-200/50" 
+          className={`w-20 h-20 md:w-24 md:h-24 text-4xl md:text-5xl text-center rounded-xl border-4 bg-white shadow-lg transition-all duration-300 font-mono font-black otp-input ${
+            disabled || isValidatingRef.current
+              ? "opacity-50 cursor-not-allowed border-gray-200"
+              : vals[i]
+                ? "border-emerald-500 bg-emerald-50 text-emerald-700 shadow-emerald-200/50"
                 : "border-gray-300 hover:border-indigo-400 focus:border-indigo-500 hover:shadow-indigo-200/30"
-          }`}
+          } ${isValidatingRef.current ? "animate-pulse" : ""}`}
           value={vals[i] || ""}
           onChange={(e) => handleChange(i, e.target.value)}
           onKeyDown={(e) => handleKeyDown(i, e)}
           onPaste={handlePaste}
-          disabled={disabled}
+          disabled={disabled || isValidatingRef.current}
           autoComplete="one-time-code"
           placeholder=""
         />
@@ -188,7 +185,7 @@ function AnimatedOtpDisplay({ otp, isExpired }: { otp: string; isExpired: boolea
           return (
             <div
               key={i}
-              className={`w-28 h-32 md:w-36 md:h-40 flex items-center justify-center text-6xl md:text-7xl font-mono font-black rounded-3xl shadow-2xl transition-all duration-300 ${
+              className={`w-20 h-20 md:w-24 md:h-24 flex items-center justify-center text-4xl md:text-5xl font-mono font-black rounded-xl shadow-lg transition-all duration-300 ${
                 isEmpty
                   ? "bg-gray-100 text-gray-400 border-2 border-gray-200"
                   : isExpired
@@ -223,7 +220,7 @@ function CountdownTimer({ seconds, onExpire }: { seconds: number; onExpire: () =
   return (
     <div className="flex items-center gap-3">
       <div className="flex-1 bg-gray-200 rounded-full h-2 overflow-hidden">
-        <div 
+        <div
           className={`h-full transition-all duration-500 ${
             seconds > 20 ? "bg-emerald-400" : seconds > 10 ? "bg-yellow-400" : "bg-red-400"
           }`}
@@ -257,7 +254,7 @@ function MessageDisplay({ message }: { message: Message | null }) {
   };
 
   return (
-    <div 
+    <div
       className={`mx-auto w-fit px-4 py-3 rounded-lg border font-medium animate-fade-in ${styles[message.type]}`}
       role="alert"
     >
@@ -275,6 +272,7 @@ export default function App() {
   const [message, setMessage] = useState<Message | null>(null);
   const [expiresAt, setExpiresAt] = useState<number | null>(null);
   const [countdown, setCountdown] = useState<number>(0);
+  const isValidatingRef = useRef(false);
 
   // Countdown timer effect
   useEffect(() => {
@@ -308,13 +306,14 @@ export default function App() {
     setMessage(null);
     setIsValid(null);
     setInputOtp("");
+    isValidatingRef.current = false;
 
     try {
       const res = await fetch(`${API_BASE}/get-otp`);
       if (!res.ok) {
         throw new Error(`Server error: ${res.status} ${res.statusText}`);
       }
-      
+
       const data: OtpResponse = await res.json();
       if (!data || typeof data.otp !== "string" || data.otp.length !== OTP_LENGTH) {
         throw new Error("Invalid OTP format received from server");
@@ -334,11 +333,11 @@ export default function App() {
     }
   };
 
-  // update validateOtp to accept an optional otp param
   const validateOtp = async (otpToCheck?: string) => {
     const otpValue = otpToCheck ?? inputOtp;
     if (otpValue.length !== OTP_LENGTH) {
       showMessage(`Please enter all ${OTP_LENGTH} digits`, MessageType.WARNING);
+      isValidatingRef.current = false;
       return;
     }
 
@@ -365,15 +364,18 @@ export default function App() {
 
       if (data.valid) {
         showMessage("🎉 OTP verified successfully!", MessageType.SUCCESS);
-        // Clear everything on successful validation
         setTimeout(() => {
           setInputOtp("");
           setOtp("");
           setExpiresAt(null);
           setIsValid(null);
+          isValidatingRef.current = false;
         }, 1200);
       } else {
         showMessage(data.message || "OTP is invalid or has expired", MessageType.ERROR);
+        setTimeout(() => {
+          isValidatingRef.current = false;
+        }, 100); // Slight delay to ensure message renders
       }
     } catch (err) {
       console.error("Failed to validate OTP:", err);
@@ -381,6 +383,9 @@ export default function App() {
         err instanceof Error ? err.message : "Validation failed. Please try again.",
         MessageType.ERROR
       );
+      setTimeout(() => {
+        isValidatingRef.current = false;
+      }, 100);
     } finally {
       setLoading(false);
     }
@@ -401,15 +406,18 @@ export default function App() {
     setMessage(null);
     setOtp("");
     setExpiresAt(null);
+    isValidatingRef.current = false;
   };
 
-  // update handleOtpComplete to pass completed OTP to validator
-  const handleOtpComplete = useCallback((completedOtp: string) => {
-    console.log(`OTP Complete: "${completedOtp}"`); // Debug log
-    if (completedOtp.length === OTP_LENGTH) {
-      validateOtp(completedOtp);
-    }
-  }, [validateOtp]); // Add validateOtp as dependency
+  const handleOtpComplete = useCallback(
+    (completedOtp: string) => {
+      console.log(`OTP Complete: "${completedOtp}"`);
+      if (completedOtp.length === OTP_LENGTH && !isValidatingRef.current) {
+        validateOtp(completedOtp);
+      }
+    },
+    [validateOtp]
+  );
 
   const isExpired = countdown === 0 && otp !== "";
 
@@ -427,7 +435,7 @@ export default function App() {
             </h1>
           </div>
           <p className="text-gray-600 text-lg">
-            Enterprise-grade 6-digit one-time passcode verification system
+            Enterprise-grade 4-digit one-time passcode verification system
           </p>
         </header>
 
@@ -436,10 +444,10 @@ export default function App() {
           <div className="text-center">
             <button
               onClick={fetchOtp}
-              disabled={loading}
+              disabled={loading || isValidatingRef.current}
               className={`px-8 py-4 rounded-2xl font-bold text-lg text-white shadow-lg transition-all duration-200 ${
-                loading 
-                  ? "bg-gray-400 cursor-not-allowed" 
+                loading || isValidatingRef.current
+                  ? "bg-gray-400 cursor-not-allowed"
                   : "bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 transform hover:scale-105"
               }`}
             >
@@ -464,14 +472,15 @@ export default function App() {
                 <span className="text-lg font-semibold text-gray-700">Time remaining:</span>
                 <button
                   onClick={copyOtp}
-                  className="text-sm px-4 py-2 rounded-xl bg-white hover:bg-gray-100 text-gray-700 font-medium transition-all duration-200 shadow-md hover:shadow-lg border border-gray-200"
+                  disabled={isValidatingRef.current}
+                  className="text-sm px-4 py-2 rounded-xl bg-white hover:bg-gray-100 text-gray-700 font-medium transition-all duration-200 shadow-md hover:shadow-lg border border-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   📋 Copy OTP
                 </button>
               </div>
-              <CountdownTimer 
-                seconds={countdown} 
-                onExpire={() => showMessage("OTP has expired. Generate a new one.", MessageType.WARNING)} 
+              <CountdownTimer
+                seconds={countdown}
+                onExpire={() => showMessage("OTP has expired. Generate a new one.", MessageType.WARNING)}
               />
             </div>
           )}
@@ -482,9 +491,9 @@ export default function App() {
               <label className="block text-2xl font-bold text-gray-800 mb-6">
                 Enter OTP to Validate
               </label>
-              <OtpInput 
-                value={inputOtp} 
-                onChange={setInputOtp} 
+              <OtpInput
+                value={inputOtp}
+                onChange={setInputOtp}
                 disabled={loading || isExpired}
                 onComplete={handleOtpComplete}
               />
@@ -494,19 +503,20 @@ export default function App() {
             <div className="flex gap-4 justify-center">
               <button
                 onClick={() => validateOtp()}
-                disabled={loading || inputOtp.length !== OTP_LENGTH || isExpired}
+                disabled={loading || inputOtp.length !== OTP_LENGTH || isExpired || isValidatingRef.current}
                 className={`px-8 py-3 rounded-xl font-bold text-lg transition-all duration-200 ${
-                  loading || inputOtp.length !== OTP_LENGTH || isExpired
+                  loading || inputOtp.length !== OTP_LENGTH || isExpired || isValidatingRef.current
                     ? "bg-gray-300 text-gray-500 cursor-not-allowed"
                     : "bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg transform hover:scale-105"
                 }`}
               >
                 {loading ? "Validating..." : "✓ Validate OTP"}
               </button>
-              
+
               <button
                 onClick={clearAll}
-                className="px-6 py-3 rounded-xl bg-gray-200 hover:bg-gray-300 text-gray-700 font-semibold transition-colors"
+                disabled={isValidatingRef.current}
+                className="px-6 py-3 rounded-xl bg-gray-200 hover:bg-gray-300 text-gray-700 font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 🗑️ Clear All
               </button>
@@ -547,52 +557,52 @@ export default function App() {
           transform: translateY(-2px) scale(1.03);
           box-shadow: 0 24px 40px -12px rgba(0, 0, 0, 0.12), 0 10px 18px -8px rgba(0, 0, 0, 0.05);
         }
-        
+
         /* Ensure text is visible */
         .otp-input {
           text-align: center !important;
           vertical-align: middle;
         }
-        
+
         @keyframes otp-pop {
-          0% { 
-            transform: translateY(36px) scale(0.68); 
-            opacity: 0; 
+          0% {
+            transform: translateY(36px) scale(0.68);
+            opacity: 0;
             rotate: -6deg;
           }
-          50% { 
-            transform: translateY(-12px) scale(1.14); 
-            opacity: 1; 
+          50% {
+            transform: translateY(-12px) scale(1.14);
+            opacity: 1;
             rotate: 3deg;
           }
-          100% { 
-            transform: translateY(0) scale(1); 
+          100% {
+            transform: translateY(0) scale(1);
             rotate: 0deg;
           }
         }
-        
+
         @keyframes fade-in {
-          from { 
-            opacity: 0; 
-            transform: translateY(20px); 
+          from {
+            opacity: 0;
+            transform: translateY(20px);
           }
-          to { 
-            opacity: 1; 
-            transform: translateY(0); 
+          to {
+            opacity: 1;
+            transform: translateY(0);
           }
         }
-        
+
         .animate-otp-pop {
           animation: otp-pop 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) both;
         }
-        
+
         .animate-fade-in {
           animation: fade-in 0.35s ease-out both;
         }
 
         /* Add glow effect for focused inputs */
         .otp-input:focus {
-          box-shadow: 
+          box-shadow:
             0 30px 60px -20px rgba(0, 0, 0, 0.18),
             0 0 0 6px rgba(99, 102, 241, 0.16),
             0 0 40px rgba(99, 102, 241, 0.22);
